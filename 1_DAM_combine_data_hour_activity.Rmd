@@ -1,0 +1,79 @@
+---
+title: "R Coig's R Notebook for combining processed DAM data files"
+output: html_notebook
+updated: 10/17/23
+---
+Rene Coig renecoig@uw.edu
+
+Load required packages
+```{r,load packages}
+library(dplyr)
+library(readr)
+```
+
+```{r}
+# Specify the folder containing the CSV files
+folder_path <- "output/"
+```
+Load in hour activity data and concatenate
+```{r}
+# List all CSV files in the folder with the *minute.csv pattern
+file_list <- list.files(path = folder_path, pattern = "*hour.csv", full.names = TRUE)
+
+# Initialize an empty data frame to store the combined data
+combined_data <- data.frame()
+
+# Loop through each CSV file and rbind them
+for (file_path in file_list) {
+  # Read the CSV file
+  data <- read_csv(file_path)
+  
+  # Combine (rbind) the filtered data with the existing combined_data
+  combined_data <- bind_rows(combined_data, data)  
+}
+
+combined_data$Time <- format(strptime(combined_data$Time, format = "%H:%M:%S"), format = "%H:%M")
+combined_data_activity<-bind_rows(unclass(distinct(combined_data)))
+```
+Load in sleep data and concatenate
+```{r}
+# List all CSV files in the folder with the *minute.csv pattern
+file_list <- list.files(path = folder_path, pattern = "*sleep.csv", full.names = TRUE)
+
+# Initialize an empty data frame to store the combined data
+combined_data <- data.frame()
+
+# Loop through each CSV file and rbind them
+for (file_path in file_list) {
+  # Read the CSV file
+  data <- read_csv(file_path)
+  
+  # Combine (rbind) the filtered data with the existing combined_data
+  combined_data <- bind_rows(combined_data, data)  
+}
+
+combined_data$Time <- format(strptime(combined_data$Time, format = "%H:%M:%S"), format = "%H:%M")
+combined_data_sleep<-bind_rows(unclass(distinct(combined_data)))
+```
+
+
+Filtering data as desired
+```{r}
+combined_data_activity<-combined_data_activity%>%filter(Geno=="CS"&treatAdult=="Ctrl"&treatLarvae=="Ctrl")
+combined_data_sleep<-combined_data_sleep%>%filter(Geno=="CS"&treatAdult=="Ctrl"&treatLarvae=="Ctrl")
+```
+Determining overlapping ages 
+```{r}
+age_range <- combined_data %>%
+  group_by(Experiment) %>%
+  summarise(max = max(AgeD), min = min(AgeD))
+
+combined_data_sleep<-combined_data_sleep%>%filter(AgeD>="4"&AgeD<=7)
+combined_data_activity<-combined_data_activity%>%filter(AgeD>="4"&AgeD<=7)
+```
+Save out file for activity levels and sleep notebooks
+```{r}
+saveRDS(combined_data_activity, "output/combined_data_activity.rds")
+saveRDS(combined_data_sleep, "output/combined_data_sleep.rds")
+```
+
