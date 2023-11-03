@@ -1,0 +1,202 @@
+---
+title: "R Coig's R Notebook for plotting sex differences in sleep bouts"
+output: html_notebook
+updated: 11/1/23
+---
+Rene Coig renecoig@uw.edu
+
+Load required packages
+```{r,load packages}
+library(dplyr)
+library(readr)
+library(ggplot2)
+library(gridExtra)
+library(DescTools)
+```
+Set Experiment name
+```{r}
+# Define the active experiment name
+experiment_name <- "DAM0"
+```
+Load in the hourly sleep file for the active DAM experiment:
+```{r,define experiment}
+# Specify the CSV file name using the experiment name
+sleep <- read.csv(paste("output/", experiment_name, "_sleep.csv", sep = ""))
+```
+Filtering only ages 4-7 days.
+```{r,filter ages}
+sleep<-sleep%>%filter(AgeD>="4"&AgeD<=7)
+```
+Identify variables in the experiment that differ (Geno or Treatment) and group by these variables for summaries.
+```{r,identify variables that differ and summarize}
+# Reorder levels of Geno
+sleep$Geno <- reorder(sleep$Geno, -as.numeric(sleep$Geno == "CS"))
+# Reorder levels of treatAdult
+sleep$treatAdult <- reorder(sleep$treatAdult, -as.numeric(sleep$treatAdult == "Ctrl"))
+# Reorder levels of treatLarvae
+sleep$treatLarvae <- reorder(sleep$treatLarvae, -as.numeric(sleep$treatLarvae == "Ctrl"))
+# Create a list of variable combinations to check
+variable_combinations_to_check <- expand.grid(
+  treatLarvae = unique(sleep$treatLarvae),
+  treatAdult = unique(sleep$treatAdult),
+  Geno = unique(sleep$Geno)
+)
+# Initialize an empty list to store results
+variable_summaries <- list()
+```
+
+
+```{r,identify variables that differ and summarize}
+# Initialize an empty list to store results
+variable_summaries <- list()
+
+# Loop through each variable combination
+for (i in 1:nrow(variable_combinations_to_check)) {
+  combination <- variable_combinations_to_check[i, ]
+  
+  # Filter the data for the current combination
+  filtered_data <- sleep %>%
+    filter(
+      treatLarvae %in% combination$treatLarvae,
+      treatAdult %in% combination$treatAdult,
+      Geno %in% combination$Geno
+    )
+  
+  # Check if the filtered data has more than one level
+  if (nrow(distinct(filtered_data)) > 1) {
+    # Calculate the summary data for the combination
+    variable_summary <- filtered_data %>%
+      group_by(treatLarvae, treatAdult, Geno, Time, Sex) %>%
+      summarise(
+        Time = first(Time),
+        variable_mean = mean(Rolling_Average),
+        variable_sd = sd(Rolling_Average),
+        Sleeping_Mode = Mode(Sleeping),  # Calculate mode of "Sleeping"
+      )
+    
+    # Append the variable summary to the list
+    variable_summaries[[paste(
+      combination$treatLarvae,
+      combination$treatAdult,
+      combination$Geno,
+      sep = "_"
+    )]] <- variable_summary
+  }
+}
+
+# Combine all variable summaries into a single dataframe
+avg_counts_by_variable <- bind_rows(variable_summaries)
+```
+
+
+
+
+
+
+Create summary data across days by tube.
+```{r,summarize across days}
+avg_counts_by_tube <- sleep %>%
+  group_by(Monitor,Tube,Time) %>%
+  summarise(Experiment=Experiment,
+            Geno=Geno,
+            Sex=Sex,
+            Time=Time,
+            treatLarvae=treatLarvae,
+            treatAdult=treatAdult,
+            tube_mean = mean(Summary_Ct), tube_sd = sd(Summary_Ct)
+            )
+avg_counts_by_tube<-bind_rows(unclass(distinct(avg_counts_by_tube)))
+```
+Plotting sleep per individual tube by sex
+```{r}
+# Define the file path for saving the plot
+plot_file <- file.path("plots", paste(experiment_name, " all tubes by sex.png", sep = ""))
+
+# Create the ggplot
+ggplot(avg_counts_by_tube, aes(x = Time, y = tube_mean, color = Sex, fill = Sex, 
+                       group = interaction(Tube, Monitor))) +
+  geom_point() +
+  geom_line() +
+  labs(
+    x = "Hour", 
+    y = "Mean Count", 
+    title = paste(experiment_name, "All Tubes by variable"),
+  ) +
+  scale_color_manual(values = c("M" = "purple", "F" = "orange")) +
+  scale_fill_manual(values = c("M" = "purple", "F" = "orange")) +
+  theme_minimal() +
+  ylim(0, 350) +
+  facet_wrap(~ Geno + treatAdult + treatLarvae)+
+  theme(axis.text.x = element_blank())  # Remove x-axis labels
+
+# Save the ggplot as a PNG file with specified dimensions
+ggsave(plot_file, width = 12, height = 6, bg = "white", dpi = 300)
+
+```
+Plotting the means by variable combinations
+```{r}
+# Define the file path for saving the plot
+plot_file <- file.path("plots", paste(experiment_name, " mean sleep by variables.png", sep = ""))
+
+# Create the ggplot
+ggplot(avg_counts_by_variable, aes(x = Time, y = variable_mean, 
+                                   color = Sex, 
+                                   group = interaction(treatLarvae, treatAdult, Sex, Geno))) +
+  geom_point(aes(shape = interaction(treatLarvae,treatAdult))) +
+  geom_line(aes(linetype = Geno)) +
+  #geom_errorbar(aes(ymin = variable_mean - variable_sd, ymax = variable_mean + variable_sd), width = 0.2) +
+   labs(
+    x = "Hour", 
+    y = "Mean Count", 
+    title = paste(experiment_name, "sleep by variable"),
+  ) +
+  scale_color_manual(values = c("M" = "purple", "F" = "orange")) +
+  theme_classic() +
+  ylim(0, 350) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))  # Rotate x-axis labels by 45 degrees
+
+# Save the ggplot as a PNG file with specified dimensions
+ggsave(plot_file, width = 12, height = 6, bg = "white", dpi = 300)
+```
+Plotting only female combinations
+```{r}
+# Define the file path for saving the plot
+plot_file <- file.path("plots", paste(experiment_name, " female mean sleep by variables.png", sep = ""))
+
+# Create the ggplot
+ggplot(avg_counts_by_variable%>%filter(Sex=="F"), aes(x = Time, y = variable_mean, color = Geno, group = interaction(treatLarvae, treatAdult, Geno))) +
+  geom_point() +
+  geom_line(aes(linetype = interaction(treatLarvae, treatAdult))) +
+  labs(
+    x = "Hour", 
+    y = "Mean Count", 
+    title = paste(experiment_name, "female sleep by variable"),
+  ) +
+  theme_classic() +
+  ylim(0, 350) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))  # Rotate x-axis labels by 45 degrees
+
+
+# Save the ggplot as a PNG file with specified dimensions
+ggsave(plot_file, width = 12, height = 6, bg = "white", dpi = 300)
+```
+Plotting only male combinations
+```{r}
+# Define the file path for saving the plot
+plot_file <- file.path("plots", paste(experiment_name, " male mean sleep by variables.png", sep = ""))
+
+# Create the ggplot
+ggplot(avg_counts_by_variable%>%filter(Sex=="M"), aes(x = Time, y = variable_mean, color = Geno, group = interaction(treatLarvae, treatAdult, Geno))) +
+  geom_point() +
+  geom_line(aes(linetype = interaction(treatLarvae, treatAdult))) +
+  labs(
+    x = "Hour", 
+    y = "Mean Count", 
+    title = paste(experiment_name, "male sleep by variable"),
+  ) +
+  theme_classic() +
+  ylim(0, 350) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))  # Rotate x-axis labels by 45 degrees
+# Save the ggplot as a PNG file with specified dimensions
+ggsave(plot_file, width = 12, height = 6, bg = "white", dpi = 300)
+```
