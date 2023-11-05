@@ -1,0 +1,102 @@
+---
+title: "R Coig's R Notebook for pre-processing DAM data"
+output: html_notebook
+updated: 11/4/23
+---
+Rene Coig renecoig@uw.edu
+Before running any of the following code, set the experiment name in line 18. This should be the name of the folder that the key (.csv file) and monitor (.txt) files are located.
+Load required packages
+```{r,load packages}
+library(dplyr)
+library(tidyr)
+library(lubridate)
+library(zoo)
+```
+Set Experiment name
+```{r,define experiment}
+# Define the active experiment name
+experiment_name <- "DAM0"
+```
+Load in data and aggregate the activity counts by minute, save to "output" folder.
+```{r,counts by minute}
+# Source the aggregate counts R script
+source("scripts/aggregate_count_data.R")
+# Call the function from the external script with the experiment name
+result <- aggregate_counts(paste("data/", experiment_name, sep = ""), aggregation_level = "minute")
+# Specify the metadata file name using the experiment name
+metadata_file <- paste("data/", experiment_name, "/key.csv", sep = "")
+# Load the metadata and combine with the aggregate data
+metadata_df <- read.csv(metadata_file)
+merged_df <- merge(result, metadata_df, by = c("Tube", "Monitor"), all.x = FALSE)
+# Filter rows based on the "Notes" column, removing questionable data
+activity_minutes <- merged_df[!grepl("injured|dead|offspring|malformed", merged_df$Notes, ignore.case = TRUE), ]
+# Separate Minute into Date and Time
+activity_minutes <- activity_minutes %>%
+  mutate(Date = as.Date(Minute),
+         Time = format(Minute, "%H:%M:%S"))
+# Format dateEclosed
+activity_minutes$dateEclosed <- mdy(activity_minutes$dateEclosed)
+# Calculate AgeD (difference in days between dateEclosed and Date)
+activity_minutes <- activity_minutes %>%
+  mutate(AgeD = as.numeric(difftime(Date, dateEclosed, units = "days")))
+# Add the experiment name as the first column
+activity_minutes <- activity_minutes %>%
+  mutate(Experiment = experiment_name)
+# Reorder columns with Experiment as the first column
+activity_minutes <- activity_minutes %>%
+  dplyr::select(Experiment, everything())
+# Specify the output file name using the experiment name
+output_file <- paste("output/", experiment_name, "_minute.csv", sep = "")
+# Save the filtered and aggregated data to a CSV file
+write.csv(activity_minutes, output_file, row.names = FALSE)
+```
+Calculate sleeping time, on a rolling period can be adjusted in minutes_window. The default if you do not change it is 3 minutes. Sleep is defined as no activity for 5 or more minutes.
+```{r,sleep rolling average}
+# Source the sleep bouts R script
+source("scripts/rolling_sleep_average.R")
+#Calculate rolling average of inactive or "sleeping" time
+sleep_minutes <- calculate_rolling_average(activity_minutes, minutes_window = 3)#This is where you change the rolling period, if desired
+# Add the experiment name as the first column
+sleep_minutes <- sleep_minutes %>%
+  mutate(Experiment = experiment_name)
+# Reorder columns with Experiment as the first column
+sleep_minutes <- sleep_minutes %>%
+  dplyr::select(Experiment, everything())
+# Specify the output file name using the experiment name
+output_file <- paste("output/", experiment_name, "_sleep.csv", sep = "")
+# Save the filtered and aggregated data to a CSV file
+write.csv(sleep_minutes, output_file, row.names = FALSE)
+```
+Load in data and aggregate the counts by hour, save to "output" folder
+```{r,counts by hour}
+# Source the aggregate counts R script
+source("scripts/aggregate_count_data.R")
+# Call the function from the external script with the experiment name
+result <- aggregate_counts(paste("data/", experiment_name, sep = ""), aggregation_level = "hour")
+# Specify the metadata file name using the experiment name
+metadata_file <- paste("data/", experiment_name, "/key.csv", sep = "")
+# Load the metadata and combine with the aggregate data
+metadata_df <- read.csv(metadata_file)
+merged_df <- merge(result, metadata_df, by = c("Tube", "Monitor"), all.x = FALSE)
+# Filter rows based on the "Notes" column, removing questionable data
+activity_hours <- merged_df[!grepl("injured|dead|offspring|malformed", merged_df$Notes, ignore.case = TRUE), ]
+# Separate Hour into Date and Time
+activity_hours <- activity_hours %>%
+  mutate(Date = as.Date(Hour),
+         Time = format(Hour, "%H:%M:%S"))
+# Format dateEclosed
+activity_hours$dateEclosed <- mdy(activity_hours$dateEclosed)
+# Calculate AgeD (difference in days between dateEclosed and Date)
+activity_hours <- activity_hours %>%
+  mutate(AgeD = as.numeric(difftime(Date, dateEclosed, units = "days")))
+# Add the experiment name as the first column
+activity_hours <- activity_hours %>%
+  mutate(Experiment = experiment_name)
+# Reorder columns with Experiment as the first column
+activity_hours <- activity_hours %>%
+  dplyr::select(Experiment, everything())
+# Specify the output file name using the experiment name
+output_file <- paste("output/", experiment_name, "_hour.csv", sep = "")
+# Save the filtered and aggregated data to a CSV file
+write.csv(activity_hours, output_file, row.names = FALSE)
+```
