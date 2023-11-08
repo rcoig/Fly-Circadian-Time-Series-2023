@@ -1,0 +1,248 @@
+---
+title: "R Coig's R Notebook for testing sex differences in activity levels"
+output: html_notebook
+updated: 11/6/23
+---
+Rene Coig renecoig@uw.edu
+
+Load required packages
+```{r,load packages}
+library(dplyr)
+library(readr)
+library(ggplot2)
+library(ggsignif)
+library(MASS)
+```
+
+```{r}
+rm(list=ls())
+combined_data <- readRDS("output/combined_data_activity.rds")
+combined_data <- combined_data%>%filter(AgeD!=7)
+#combined_data <- combined_data%>%filter(Experiment!="DAMtest")
+
+```
+Create summary data across days and experiments
+```{r}
+avg_counts_by_tube <- combined_data %>%
+  group_by(Experiment,Monitor,Tube,Time) %>%
+  summarise(Experiment=Experiment,
+            Geno=Geno,
+            Sex=Sex,
+            Time=Time,
+            tube_mean = round(mean(Summary_Ct)), 
+            tube_sd = round(sd(Summary_Ct))
+            )
+avg_counts_by_Experiment <- avg_counts_by_tube %>%
+  group_by(Experiment,Sex,Time) %>%
+  summarise(Experiment=Experiment,
+            Geno=Geno,
+            Sex=Sex,
+            Time=Time,
+            experiment_mean = round(mean(tube_mean)), 
+            experiment_sd = round(sd(tube_mean))
+            )
+#avg_counts_by_tube$Time <- format(strptime(avg_counts_by_tube$Time, format = "%H:%M:%S"), format = "%H:%M")
+avg_counts_by_tube<-bind_rows(unclass(distinct(avg_counts_by_tube)))
+avg_counts_by_Geno <- avg_counts_by_Experiment %>%
+  group_by(Sex,Time) %>%
+  summarise(Geno=Geno,
+            Sex=Sex,
+            Time=Time,
+            mean = round(mean(experiment_mean)), 
+            sd = round(sd(experiment_mean))
+            )
+#avg_counts_by_Experiment$Time <- format(strptime(avg_counts_by_Experiment$Time, format = "%H:%M:%S"), format = "%H:%M")
+avg_counts_by_Experiment<-bind_rows(unclass(distinct(avg_counts_by_Experiment)))
+
+#avg_counts_by_Geno$Time <- format(strptime(avg_counts_by_Geno$Time, format = "%H:%M:%S"), format = "%H:%M")
+avg_counts_by_Geno<-bind_rows(unclass(distinct(avg_counts_by_Geno)))
+```
+Plotting by Sex
+```{r}
+ggplot(avg_counts_by_tube, aes(x = Time, y = tube_mean, color = Sex, fill = Sex, 
+                       group = interaction(Tube, Monitor))) +
+  geom_point() +
+  geom_line() +
+  labs(x = "Hour", y = "Mean Count", title = "All Tubes by Sex") +
+  scale_color_manual(values = c("M" = "purple", "F" = "orange")) +
+  scale_fill_manual(values = c("M" = "purple", "F" = "orange")) +
+  theme_minimal() +
+  facet_wrap(~ Experiment, nrow = 3)
+
+ggplot(avg_counts_by_Experiment, aes(x = Time, y = experiment_mean, color = Sex, fill = Sex,
+                                     group = interaction(Sex,Experiment))) +
+  geom_point() +
+  geom_line() +
+  labs(x = "Hour", y = "Mean Count", title = "Separate Experiments") +
+  scale_color_manual(values = c("M" = "purple", "F" = "orange")) +
+  scale_fill_manual(values = c("M" = "purple", "F" = "orange")) +
+  theme_minimal() 
+
+ggplot(avg_counts_by_Geno, aes(x = Time, y = mean, color = Sex, fill = Sex,                                group=interaction(Sex,Geno))) +
+  geom_errorbar(aes(ymin = mean - sd, ymax = mean + sd), width = 0.2) +
+  annotate("rect", xmin = "00:00", xmax = "09:00", ymin = -Inf, ymax = Inf,
+           fill = "darkgray", alpha = 0.5) +
+  annotate("rect", xmin = "21:00", xmax = "23:59", ymin = -Inf, ymax = Inf,
+           fill = "darkgray", alpha = 0.5) +
+  annotate("rect", xmin = "01:00", xmax = "03:00", ymin = -Inf, ymax = Inf,
+           fill = "lightblue", alpha = 0.7) +
+  annotate("text", x = "02:00", y = Inf,
+           label = "Midnight Snack", vjust = 13, color = "black", size = 4)+
+  annotate("rect", xmin = "07:00", xmax = "09:00", ymin = -Inf, ymax = Inf,
+           fill = "lightpink", alpha = 0.7) +
+  annotate("text", x = "08:00", y = Inf,
+           label = "Morning Anxiety", vjust = 3, color = "black", size = 4)+
+  annotate("rect", xmin = "11:00", xmax = "13:00", ymin = -Inf, ymax = Inf,
+           fill = "lightgreen", alpha = 0.7) +
+  annotate("text", x = "12:00", y = Inf,
+           label = "Early Siesta", vjust = 13, color = "black", size = 4)+
+  annotate("rect", xmin = "20:00", xmax = "22:00", ymin = -Inf, ymax = Inf,
+           fill = "violet", alpha = 0.7) +
+  annotate("text", x = "21:00", y = Inf,
+           label = "Evening Peak", vjust = 3, color = "black", size = 4)+
+  geom_point() +
+  geom_line() +
+  labs(
+    x = "Hour", y = "Mean Counts per Hour",
+    title = element_text(
+      paste("Canton S Circadian Activity Ages 4-6 days",  # Concatenate the lines
+            "\nAveraged across three experiments"),  # Second line of the title
+      lineheight = 0.9  # Adjust the line height here (default is 1)
+    )
+  ) +
+  scale_color_manual(values = c("M" = "purple", "F" = "orange")) +
+  scale_fill_manual(values = c("M" = "purple", "F" = "orange")) +
+  theme_classic() + theme(plot.title = element_text(hjust = 0.5))+
+  theme(plot.title = element_text(hjust = 0.5),
+        axis.text.x = element_text(angle = 45, hjust = 1))  # Rotate x-axis labels 45deg
+```
+Significance Testing for Canton S largest sex differences in Activity levels:
+Poisson model
+```{r}
+combined_data
+# Fit Poisson regression model
+poisson_model <- glm(tube_mean ~ Sex * Time + Experiment, data = avg_counts_by_tube, family = poisson)
+
+# View model summary
+summary(poisson_model)
+
+# Get the summary table as a data frame
+summary_df <- as.data.frame(summary(poisson_model)$coefficients)
+
+# Extract the desired columns
+summary_df <- summary_df[, c("Estimate", "Std. Error", "z value", "Pr(>|z|)")]
+
+# Rename the columns for clarity
+colnames(summary_df) <- c("Estimate", "Std.Error", "z.value", "Pr(>|z|)")
+```
+Check for overdispersion (this code may need to be tweaked, not tested yet)
+```{r}
+# Fit a negative binomial model (accounting for overdispersion)
+nb_model <- glm.nb(Summary_Ct ~ predictor_variable, data = your_data)
+
+# Perform a Likelihood Ratio Test (LRT)
+lr_test <- lrtest(poisson_model, nb_model)
+
+# Check the p-value of the test
+p_value <- lr_test$`Pr(>Chisq)`
+
+# If p-value is significant (typically < 0.05), it suggests overdispersion
+if (p_value < 0.05) {
+  cat("Overdispersion detected.")
+} else {
+  cat("No significant overdispersion.")
+}
+
+```
+
+
+Pulling out dfs from the original data to plot these four separate areas that have the greatest sex difference in CS: 2:00, 8:00, 11:00 and 21:00.
+```{r}
+focus_all <- combined_data %>%
+  mutate(Activity_Label = case_when(
+    Time == "03:00" ~ "Midnight Snack",
+    Time == "08:00" ~ "Morning Anxiety",
+    Time == "12:00" ~ "Early Siesta",
+    Time == "21:00" ~ "Peak Activity",
+    TRUE ~ "Other"
+  ),
+  p_value = case_when(
+    Time == "03:00" ~ 1.373282e-59,
+    Time == "08:00" ~ 7.965520e-83,
+    Time == "12:00" ~ 1.237893e-120,
+    Time == "21:00" ~ 1.466501e-32,
+    TRUE ~ NA_real_
+  ))
+focus_all$Activity_Label<-factor(focus_all$Activity_Label,
+      levels=c("Morning Anxiety","Early Siesta","Peak Activity","Midnight Snack","Other"))
+
+focus_areas <- avg_counts_by_tube %>%
+  mutate(Activity_Label = case_when(
+    Time == "03:00" ~ "Midnight Snack",
+    Time == "08:00" ~ "Morning Anxiety",
+    Time == "12:00" ~ "Early Siesta",
+    Time == "21:00" ~ "Peak Activity",
+    TRUE ~ "Other"
+  ),
+  p_value = case_when(
+    Time == "03:00" ~ 1.373282e-59,
+    Time == "08:00" ~ 7.965520e-83,
+    Time == "12:00" ~ 1.237893e-120,
+    Time == "21:00" ~ 1.466501e-32,
+    TRUE ~ NA_real_
+  ))
+focus_areas$Activity_Label<-factor(focus_areas$Activity_Label,
+      levels=c("Morning Anxiety","Early Siesta","Peak Activity","Midnight Snack","Other"))
+
+focus_areas2 <- avg_counts_by_Experiment %>%
+  mutate(Activity_Label = case_when(
+    Time == "03:00" ~ "Midnight Snack",
+    Time == "08:00" ~ "Morning Anxiety",
+    Time == "12:00" ~ "Early Siesta",
+    Time == "21:00" ~ "Peak Activity",
+    TRUE ~ "Other"
+  ),
+  p_value = case_when(
+    Time == "03:00" ~ 1.373282e-59,
+    Time == "08:00" ~ 7.965520e-83,
+    Time == "12:00" ~ 1.237893e-120,
+    Time == "21:00" ~ 1.466501e-32,
+    TRUE ~ NA_real_
+  ))
+focus_areas2$Activity_Label<-factor(focus_areas2$Activity_Label,
+      levels=c("Morning Anxiety","Early Siesta","Peak Activity","Midnight Snack","Other"))
+
+```
+Plotting each time section as violin plots w/ corrected pvalues
+```{r}
+# Create the plot with p-value annotations
+ggplot(focus_all, aes(x = Sex, y = Summary_Ct, fill = Sex, group = Sex)) +
+  geom_violin() +
+  geom_point() +
+  labs(x = "Sex", y = "Activity Counts", title = "CS Activity Differences by Time and Sex - All data points") +
+  scale_fill_manual(values = c("M" = "purple", "F" = "orange")) +
+  theme_classic() +
+  facet_grid(~Activity_Label) +
+  geom_text(data = focus_all, aes(x = "M", y = max(Summary_Ct) + 20, label = ifelse(p_value < 0.00001, "<0.00001", sprintf("%.3f", p_value))), size = 3.5) +
+  theme(plot.caption = element_text(hjust = 0))  # Move caption to the left
+
+ggplot(focus_areas, aes(x = Sex, y = tube_mean, fill = Sex, group = Sex)) +
+  geom_violin() +
+  geom_point() +
+  labs(x = "Sex", y = "Activity Counts", title = "CS Activity Differences by Time and Sex - All averaged data points") +
+  scale_fill_manual(values = c("M" = "purple", "F" = "orange")) +
+  theme_classic() +
+  facet_grid(~Activity_Label) +
+  geom_text(data = focus_areas, aes(x = "M", y = 500, label = ifelse(p_value < 0.001, "<0.001", sprintf("%.3f", p_value))), size = 3.5) +
+  theme(plot.caption = element_text(hjust = 0))  # Move caption to the left
+
+ggplot(focus_areas2, aes(x = Sex, y = experiment_mean, fill = Sex, group = Sex)) +
+  geom_violin() +
+  geom_point() +
+  labs(x = "Sex", y = "Activity Counts", title = "CS Activity Differences by Time and Sex - Experimental Means") +
+  scale_fill_manual(values = c("M" = "purple", "F" = "orange")) +
+  theme_classic() +
+  facet_grid(~Activity_Label) +
+  geom_text(data = focus_areas2, aes(x = "M", y = max(experiment_mean) + 20, label = ifelse(p_value < 0.00001, "<0.00001", sprintf("%.3f", p_value))), size = 3.5) +
+  theme(plot.caption = element_text(hjust = 0))  # Move caption to the left
+```
