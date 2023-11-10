@@ -1,0 +1,304 @@
+---
+title: "R Coig's R Notebook for pre-processing DAMdev data"
+output: html_notebook
+updated: 11/8/23
+---
+Rene Coig renecoig@uw.edu
+Before running any of the following code, set the experiment name in line 18. This should be the name of the folder that the key (.csv file) and monitor (.txt) files are located.
+Load required packages
+```{r,load packages}
+library(dplyr)
+library(tidyr)
+library(lubridate)
+library(zoo)
+```
+Set Experiment name and start time
+```{r,define experiment}
+# Define the active experiment name
+experiment_name <- "DAMdev0"
+cutoff_datetime <- ymd_hms("2023-11-04 16:00:00")#nothing eclosed before now
+```
+Load in data and aggregate the activity counts by minute, remove data prior to first eclosion and save to "output" folder.
+```{r,counts by minute}
+# Source the aggregate counts R script
+source("scripts/aggregate_count_data.R")
+# Call the function from the external script with the experiment name
+result <- aggregate_counts(paste("data/", experiment_name, sep = ""), aggregation_level = "minute")
+# Specify the metadata file name using the experiment name
+metadata_file <- paste("data/", experiment_name, "/key.csv", sep = "")
+# Load the metadata and combine with the aggregate data
+metadata_df <- read.csv(metadata_file)
+merged_df <- merge(result, metadata_df, by = c("Tube", "Monitor"), all.x = FALSE)
+activity_minutes <- merged_df %>%
+  filter(Minute < cutoff_datetime) 
+```
+Determining which tubes had any movement at all
+```{r}
+# Determining the first instance of non-zero Summary_Ct for each Tube and Monitor, sorted by Minute
+movement <- distinct(activity_minutes %>%
+  group_by(Tube, Monitor) %>%
+  summarise(
+    Tube=Tube,
+    Monitor=Monitor,
+    Notes=Notes,
+    Geno=Geno,
+    Sex=Sex,
+    treatLarvae=treatLarvae,
+    Total_Ct = sum(Summary_Ct)))
+output_file <- paste("output/", experiment_name, "_total_counts.csv", sep = "")
+# Save the filtered and aggregated data to a CSV file
+# Specify the assayer file name using the experiment name
+metadata_file <- paste("data/", experiment_name, "/key_assayer.csv", sep = "")
+# Load the metadata and combine with the aggregate data
+assayer <- read.csv(metadata_file)
+movement<-merge(movement,assayer,by=c("Monitor"))
+write.csv(movement, output_file, row.names = FALSE)
+```
+Looking at Dead Tubes by assayer, Monitor, Geno and Treatment
+```{r}
+# Filter for just absence or presence of movement
+note_counts_binary <- movement %>%
+  mutate(Category = ifelse(Notes == "no pupae or larvae detected", "No Pupae", "Other"))
+
+# Count the number of tubes in each category for each Monitor
+note_counts_by_monitor <- note_counts_binary %>%
+  group_by(Monitor, Category) %>%
+  summarise(Count = n()) %>%
+  ungroup()
+
+# Count the number of tubes in each category for each assayer
+note_counts_by_assayer <- note_counts_binary %>%
+  group_by(Assayer, Category) %>%
+  summarise(Count = n()) %>%
+  ungroup() %>%
+  group_by(Assayer) %>%
+  mutate(Total_Count = sum(Count)) %>%
+  ungroup()
+note_counts_by_assayer$percentage<-note_counts_by_assayer$Count/note_counts_by_assayer$Total_Count
+# Count the number of tubes in each category for each genotype
+note_counts_by_geno <- note_counts_binary %>%
+  group_by(Geno, Category) %>%
+  summarise(Count = n()) %>%
+  ungroup() %>%
+  group_by(Geno) %>%
+  mutate(Total_Count = sum(Count)) %>%
+  ungroup()
+note_counts_by_geno$percentage<-note_counts_by_geno$Count/note_counts_by_geno$Total_Count
+# Count the number of tubes in each category for each treatment
+note_counts_by_treat <- note_counts_binary %>%
+  group_by(treatLarvae, Category) %>%
+  summarise(Count = n()) %>%
+  ungroup() %>%
+  group_by(treatLarvae) %>%
+  mutate(Total_Count = sum(Count)) %>%
+  ungroup()
+note_counts_by_treat$percentage<-note_counts_by_treat$Count/note_counts_by_treat$Total_Count
+```
+Plots of dead tubes
+```{r}
+# Install and load the gridExtra package if you haven't already
+install.packages("gridExtra")
+library(gridExtra)
+
+# Create the four bar plots
+plot1 <- ggplot(note_counts_for_plots, aes(x = factor(Monitor), y = Count, fill = Category)) +
+  geom_bar(stat = "identity") +
+  labs(x = "Monitor", y = "Number of Tubes", title = "Number of dead Tubes by Monitor") +
+  scale_fill_discrete(name = "Notes") +
+  theme_minimal()
+
+plot2 <- ggplot(note_counts_by_assayer, aes(x = factor(Assayer), y = percentage, fill = Category)) +
+  geom_bar(stat = "identity") +
+  labs(x = "Assayer", y = "Number of Tubes", title = "Number of dead tubes by Assayer") +
+  scale_fill_discrete(name = "Notes") +
+  theme_minimal()
+
+plot3 <- ggplot(note_counts_by_geno, aes(x = factor(Geno), y = percentage, fill = Category)) +
+  geom_bar(stat = "identity") +
+  labs(x = "Geno", y = "Number of Tubes", title = "Number of dead tubes by Genotype") +
+  scale_fill_discrete(name = "Notes") +
+  theme_minimal()
+
+plot4 <- ggplot(note_counts_by_treat, aes(x = factor(treatLarvae), y = percentage, fill = Category)) +
+  geom_bar(stat = "identity") +
+  labs(x = "treatLarvae", y = "Number of Tubes", title = "Number of dead tubes by Treatment") +
+  scale_fill_discrete(name = "Notes") +
+  theme_minimal()
+
+# Arrange the plots in a 4x4 grid
+grid_arrange <- grid.arrange(plot1, plot2, plot3, plot4, ncol = 2, nrow = 2)
+
+# Save the grid as an image (e.g., PNG)
+ggsave("bar_plots_grid.png", grid_arrange, width = 10, height = 10)
+
+```
+
+Looking at Dead Tubes by Sex, Geno and Treatment
+```{r}
+# Filter for just absence or presence of movement
+note_counts_binary <- movement %>%
+  mutate(Category = ifelse(Notes == "no pupae or larvae detected", "No Pupae", "Other"))
+
+# Count the number of tubes in each category for each Sex,Geno, Treatment Combo
+note_counts_by_group <- note_counts_binary %>%
+  group_by(Geno, treatLarvae, Category, Sex) %>%
+  count() %>%
+  ungroup()
+
+# Pivot the table to have counts for each Sex in separate columns
+note_counts_by_group <- pivot_wider(note_counts_by_group, 
+                                    names_from = Sex, 
+                                    values_from = n, 
+                                    values_fill = 0)
+note_counts_by_group$SexRatio<-note_counts_by_group$M/note_counts_by_group$F
+
+# Count the number of tubes in each category for each assayer
+note_counts_by_assayer <- note_counts_binary %>%
+  group_by(Assayer, Category) %>%
+  summarise(Count = n()) %>%
+  ungroup() %>%
+  group_by(Assayer) %>%
+  mutate(Total_Count = sum(Count)) %>%
+  ungroup()
+note_counts_by_assayer$percentage<-note_counts_by_assayer$Count/note_counts_by_assayer$Total_Count
+# Count the number of tubes in each category for each genotype
+note_counts_by_geno <- note_counts_binary %>%
+  group_by(Geno, Category) %>%
+  summarise(Count = n()) %>%
+  ungroup() %>%
+  group_by(Geno) %>%
+  mutate(Total_Count = sum(Count)) %>%
+  ungroup()
+note_counts_by_geno$percentage<-note_counts_by_geno$Count/note_counts_by_geno$Total_Count
+# Count the number of tubes in each category for each treatment
+note_counts_by_treat <- note_counts_binary %>%
+  group_by(treatLarvae, Category) %>%
+  summarise(Count = n()) %>%
+  ungroup() %>%
+  group_by(treatLarvae) %>%
+  mutate(Total_Count = sum(Count)) %>%
+  ungroup()
+note_counts_by_treat$percentage<-note_counts_by_treat$Count/note_counts_by_treat$Total_Count
+```
+
+Looking at malformed Tubes by assayer, Monitor, Geno and Treatment
+```{r}
+# Filter for just absence or presence of malformation
+note_counts_malformed <- movement %>%
+  mutate(Category = ifelse(Notes == "malformed", "malformed", "Other"))
+
+# Count the number of tubes in each category for each Monitor
+note_counts_by_monitor <- note_counts_malformed %>%
+  group_by(Monitor, Category) %>%
+  summarise(Count = n()) %>%
+  ungroup()
+
+# Count the number of tubes in each category for each assayer
+note_counts_by_assayer <- note_counts_malformed %>%
+  group_by(Assayer, Category) %>%
+  summarise(Count = n()) %>%
+  ungroup() %>%
+  group_by(Assayer) %>%
+  mutate(Total_Count = sum(Count)) %>%
+  ungroup()
+note_counts_by_assayer$percentage<-note_counts_by_assayer$Count/note_counts_by_assayer$Total_Count
+# Count the number of tubes in each category for each genotype
+note_counts_by_geno <- note_counts_malformed %>%
+  group_by(Geno, Category) %>%
+  summarise(Count = n()) %>%
+  ungroup() %>%
+  group_by(Geno) %>%
+  mutate(Total_Count = sum(Count)) %>%
+  ungroup()
+note_counts_by_geno$percentage<-note_counts_by_geno$Count/note_counts_by_geno$Total_Count
+# Count the number of tubes in each category for each treatment
+note_counts_by_treat <- note_counts_malformed %>%
+  group_by(treatLarvae, Category) %>%
+  summarise(Count = n()) %>%
+  ungroup() %>%
+  group_by(treatLarvae) %>%
+  mutate(Total_Count = sum(Count)) %>%
+  ungroup()
+note_counts_by_treat$percentage<-note_counts_by_treat$Count/note_counts_by_treat$Total_Count
+```
+Plots of malformed tubes
+```{r}
+library(gridExtra)
+
+# Create the four bar plots
+plot1 <- ggplot(note_counts_by_monitor, aes(x = factor(Monitor), y = Count, fill = Category)) +
+  geom_bar(stat = "identity") +
+  labs(x = "Monitor", y = "Number of Tubes", title = "Number of malformed Tubes by Monitor") +
+  scale_fill_discrete(name = "Notes") +
+  theme_minimal()
+
+plot2 <- ggplot(note_counts_by_assayer, aes(x = factor(Assayer), y = percentage, fill = Category)) +
+  geom_bar(stat = "identity") +
+  labs(x = "Assayer", y = "Number of Tubes", title = "Number of malformed tubes by Assayer") +
+  scale_fill_discrete(name = "Notes") +
+  theme_minimal()
+
+plot3 <- ggplot(note_counts_by_geno, aes(x = factor(Geno), y = percentage, fill = Category)) +
+  geom_bar(stat = "identity") +
+  labs(x = "Geno", y = "Number of Tubes", title = "Number of malformed tubes by Genotype") +
+  scale_fill_discrete(name = "Notes") +
+  theme_minimal()
+
+plot4 <- ggplot(note_counts_by_treat, aes(x = factor(treatLarvae), y = percentage, fill = Category)) +
+  geom_bar(stat = "identity") +
+  labs(x = "treatLarvae", y = "Number of Tubes", title = "Number of malformed tubes by Treatment") +
+  scale_fill_discrete(name = "Notes") +
+  theme_minimal()
+
+# Arrange the plots in a 4x4 grid
+grid_arrange <- grid.arrange(plot1, plot2, plot3, plot4, ncol = 2, nrow = 2)
+
+# Save the grid as an image (e.g., PNG)
+ggsave("malformed_plots_grid.png", grid_arrange, width = 10, height = 10)
+
+```
+
+
+Determining the first time point at which each tube had movement
+```{r,first movement}
+# Determining the first instance of non-zero Summary_Ct for each Tube and Monitor, sorted by Minute
+first_non_zero <- activity_minutes %>%
+  arrange(Minute) %>% # Sort by Minute
+  group_by(Tube, Monitor) %>%
+  filter(Summary_Ct != 0) %>%
+  slice(1) %>%
+  ungroup()
+output_file <- paste("output/", experiment_name, "_total_counts.csv", sep = "")
+# Save the filtered and aggregated data to a CSV file
+write.csv(activity_minutes, output_file, row.names = FALSE)
+```
+Determining which tubes had no movement
+```{r}
+# Create a dataframe with all tubes
+all_tubes <- unique(activity_minutes[, c("Monitor", "Tube")])
+# Use anti_join to find tubes not included in first_non_zero
+no_movement <- anti_join(all_tubes, first_non_zero, by = c("Monitor", "Tube"))
+# Subset the activity_minutes dataframe for those that have no movement
+subset_activity_minutes <- activity_minutes %>%
+  semi_join(no_movement, by = c("Monitor", "Tube"))
+```
+
+
+
+
+
+```{r,}
+# Filter rows based on the "Notes" column, removing sex info that is NA
+first_non_zero <- first_non_zero %>%
+  filter(!grepl("NA", Sex, ignore.case = TRUE))
+# Add the experiment name as the first column
+first_non_zero <- first_non_zero %>%
+  mutate(Experiment = experiment_name)
+# Reorder columns with Experiment as the first column
+first_non_zero <- first_non_zero %>%
+  dplyr::select(Experiment, everything())
+# Specify the output file name using the experiment name
+output_file <- paste("output/", experiment_name, "_first_non_zero.csv", sep = "")
+# Save the filtered and aggregated data to a CSV file
+write.csv(first_non_zero, output_file, row.names = FALSE)
+```
