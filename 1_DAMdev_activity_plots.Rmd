@@ -1,0 +1,265 @@
+---
+title: "R Coig's R Notebook for plotting sex differences in DAM development experiments"
+output: html_notebook
+updated: 11/8/23
+---
+Rene Coig renecoig@uw.edu
+
+Load required packages
+```{r,load packages}
+library(dplyr)
+library(readr)
+library(ggplot2)
+library(lubridate)
+```
+Set Experiment name and start time
+```{r}
+# Define the active experiment name
+experiment_name <- "DAMdev1"
+```
+Load in the hourly activity file for the active DAM experiment:
+```{r,define experiment}
+# Specify the CSV file name using the experiment name
+activity <- read.csv(paste("output/", experiment_name, "_minute.csv", sep = ""))
+```
+Determining the first 
+```{r,first movement}
+# Determining the first instance of non-zero Summary_Ct for each Tube and Monitor, sorted by Minute
+first_non_zero <- df_eclosion_by_minute %>%
+  arrange(Minute) %>% # Sort by Minute
+  group_by(Tube, Monitor) %>%
+  filter(Summary_Ct != 0) %>%
+  slice(1) %>%
+  ungroup()
+```
+Identify variables in the experiment that differ (Geno or Treatment) and group by these variables for summaries.
+```{r,identify variables that differ and summarize}
+# Reorder levels of Geno
+activity$Geno <- reorder(activity$Geno, -as.numeric(activity$Geno == "CS"))
+
+# Reorder levels of treatAdult
+activity$treatAdult <- reorder(activity$treatAdult, -as.numeric(activity$treatAdult == "Ctrl"))
+
+# Reorder levels of treatLarvae
+activity$treatLarvae <- reorder(activity$treatLarvae, -as.numeric(activity$treatLarvae == "Ctrl"))
+
+
+# Create a list of variable combinations to check
+variable_combinations_to_check <- expand.grid(
+  treatLarvae = unique(activity$treatLarvae),
+  treatAdult = unique(activity$treatAdult),
+  Geno = unique(activity$Geno)
+)
+
+# Initialize an empty list to store results
+variable_summaries <- list()
+
+# Loop through each variable combination
+for (i in 1:nrow(variable_combinations_to_check)) {
+  combination <- variable_combinations_to_check[i, ]
+  
+  # Filter the data for the current combination
+  filtered_data <- activity %>%
+    filter(
+      treatLarvae %in% combination$treatLarvae,
+      treatAdult %in% combination$treatAdult,
+      Geno %in% combination$Geno
+    )
+  
+  # Check if the filtered data has more than one level
+  if (nrow(distinct(filtered_data)) > 1) {
+    # Calculate the summary data for the combination
+    variable_summary <- filtered_data %>%
+      group_by(treatLarvae, treatAdult, Geno, Time, Sex) %>%
+      summarise(
+        Time = first(Time),
+        variable_mean = mean(Summary_Ct),
+        variable_sd = sd(Summary_Ct)
+      )
+    
+    # Append the variable summary to the list
+    variable_summaries[[paste(
+      combination$treatLarvae,
+      combination$treatAdult,
+      combination$Geno,
+      sep = "_"
+    )]] <- variable_summary
+  }
+}
+
+# Combine all variable summaries into a single dataframe
+avg_counts_by_variable <- bind_rows(variable_summaries)
+```
+Create summary data across days by tube.
+```{r,summarize across days}
+avg_counts_by_tube <- activity %>%
+  arrange(Hour)%>%
+  group_by(Monitor, Tube, Time) %>%
+  summarise(Experiment=Experiment,
+            Geno=Geno,
+            Sex=Sex,
+            Time=Time,
+            treatLarvae=treatLarvae,
+            treatAdult=treatAdult,
+            tube_mean = mean(Summary_Ct), tube_sd = sd(Summary_Ct)
+            )
+avg_counts_by_tube<-bind_rows(unclass(distinct(avg_counts_by_tube)))
+```
+Plotting activity per individual tube by sex
+```{r}
+# Define the file path for saving the plot
+plot_file <- file.path("plots", paste(experiment_name, " all tubes by sex.png", sep = ""))
+
+# Create the ggplot
+ggplot(avg_counts_by_tube, aes(x = Time, y = tube_mean, color = Sex, fill = Sex, 
+                       group = interaction(Tube, Monitor))) +
+  geom_point() +
+  geom_line() +
+  labs(
+    x = "Hour", 
+    y = "Mean Count", 
+    title = paste(experiment_name, "All Tubes by variable"),
+  ) +
+  scale_color_manual(values = c("M" = "purple", "F" = "orange")) +
+  scale_fill_manual(values = c("M" = "purple", "F" = "orange")) +
+  theme_minimal() +
+  ylim(0, 350) +
+  facet_wrap(~ Geno + treatAdult + treatLarvae)+
+  theme(axis.text.x = element_blank())  # Remove x-axis labels
+
+# Save the ggplot as a PNG file with specified dimensions
+ggsave(plot_file, width = 12, height = 6, bg = "white", dpi = 300)
+
+```
+Plotting the means by variable combinations
+```{r}
+# Define the file path for saving the plot
+plot_file <- file.path("plots", paste(experiment_name, " mean activity by variables.png", sep = ""))
+
+# Create the ggplot
+ggplot(avg_counts_by_variable, aes(x = Time, y = variable_mean, 
+                                   color = Sex, 
+                                   group = interaction(treatLarvae, treatAdult, Sex, Geno))) +
+  geom_errorbar(aes(ymin = pmax(variable_mean - variable_sd, 0), ymax = variable_mean + variable_sd), width = 0.2)+
+annotate("rect", xmin = "00:00:00", xmax = "09:00:00", ymin = -Inf, ymax = Inf,
+           fill = "gray", alpha = 0.3) +
+  annotate("rect", xmin = "21:00:00", xmax = "23:00:00", ymin = -Inf, ymax = Inf,
+           fill = "gray", alpha = 0.3) +
+    annotate("rect", xmin = "01:00:00", xmax = "03:00:00", ymin = -Inf, ymax = Inf,
+           fill = "lightblue", alpha = 0.7) +
+    annotate("text", x = "02:00:00", y = Inf,
+           label = "Midnight Snack", vjust = 13, color = "black", size = 4)+
+      annotate("rect", xmin = "07:00:00", xmax = "09:00:00", ymin = -Inf, ymax = Inf,
+           fill = "lightpink", alpha = 0.7) +
+    annotate("text", x = "08:00:00", y = Inf,
+           label = "Morning Anxiety", vjust = 3, color = "black", size = 4)+
+        annotate("rect", xmin = "11:00:00", xmax = "13:00:00", ymin = -Inf, ymax = Inf,
+           fill = "lightgreen", alpha = 0.7) +
+    annotate("text", x = "12:00:00", y = Inf,
+           label = "Early Siesta", vjust = 13, color = "black", size = 4)+
+        annotate("rect", xmin = "20:00:00", xmax = "22:00:00", ymin = -Inf, ymax = Inf,
+           fill = "violet", alpha = 0.7) +
+    annotate("text", x = "21:00:00", y = Inf,
+           label = "Evening Peak", vjust = 3, color = "black", size = 4)+
+    geom_point(aes(shape = interaction(treatLarvae,treatAdult))) +
+  geom_line(aes(linetype = Geno)) +
+  labs(x = "Hour", 
+       y = "Mean Counts per Hour", 
+       title = paste(experiment_name, "activity by variable"),
+       ) +
+  scale_color_manual(values = c("M" = "purple", "F" = "orange")) +
+  scale_fill_manual(values = c("M" = "purple", "F" = "orange")) +
+  theme_classic() + theme(plot.title = element_text(hjust = 0.5))+    
+  ylim(0, 350) +
+  theme(plot.title = element_text(hjust = 0.5),
+    axis.text.x = element_text(angle = 45, hjust = 1))  # Rotate x-axis labels 45deg
+
+# Save the ggplot as a PNG file with specified dimensions
+ggsave(plot_file, width = 12, height = 6, bg = "white", dpi = 300)
+```
+Plotting only female combinations
+```{r}
+# Define the file path for saving the plot
+plot_file <- file.path("plots", paste(experiment_name, " female mean activity by variables.png", sep = ""))
+
+# Create the ggplot
+ggplot(avg_counts_by_variable%>%filter(Sex=="F"), aes(x = Time, y = variable_mean, color = Geno, group = interaction(treatLarvae, treatAdult, Geno))) +
+  geom_errorbar(aes(ymin = pmax(variable_mean - variable_sd, 0), ymax = variable_mean + variable_sd), width = 0.2)+
+  annotate("rect", xmin = "00:00:00", xmax = "09:00:00", ymin = -Inf, ymax = Inf,
+           fill = "gray", alpha = 0.3) +
+  annotate("rect", xmin = "21:00:00", xmax = "23:00:00", ymin = -Inf, ymax = Inf,
+           fill = "gray", alpha = 0.3) +
+    annotate("rect", xmin = "01:00:00", xmax = "03:00:00", ymin = -Inf, ymax = Inf,
+           fill = "lightblue", alpha = 0.7) +
+    annotate("text", x = "02:00:00", y = Inf,
+           label = "Midnight Snack", vjust = 13, color = "black", size = 4)+
+      annotate("rect", xmin = "07:00:00", xmax = "09:00:00", ymin = -Inf, ymax = Inf,
+           fill = "lightpink", alpha = 0.7) +
+    annotate("text", x = "08:00:00", y = Inf,
+           label = "Morning Anxiety", vjust = 3, color = "black", size = 4)+
+        annotate("rect", xmin = "11:00:00", xmax = "13:00:00", ymin = -Inf, ymax = Inf,
+           fill = "lightgreen", alpha = 0.7) +
+    annotate("text", x = "12:00:00", y = Inf,
+           label = "Early Siesta", vjust = 13, color = "black", size = 4)+
+        annotate("rect", xmin = "20:00:00", xmax = "22:00:00", ymin = -Inf, ymax = Inf,
+           fill = "violet", alpha = 0.7) +
+    annotate("text", x = "21:00:00", y = Inf,
+           label = "Evening Peak", vjust = 3, color = "black", size = 4)+
+    geom_point() +
+  geom_line(aes(linetype = interaction(treatLarvae, treatAdult))) +
+  labs(
+    x = "Hour", 
+    y = "Mean Count", 
+    title = paste(experiment_name, "female activity by variable"),
+  ) +
+  theme_classic() +
+  ylim(0, 350) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))  # Rotate x-axis labels by 45 degrees
+
+
+# Save the ggplot as a PNG file with specified dimensions
+ggsave(plot_file, width = 12, height = 6, bg = "white", dpi = 300)
+```
+Plotting only male combinations
+```{r}
+# Define the file path for saving the plot
+plot_file <- file.path("plots", paste(experiment_name, " male mean activity by variables.png", sep = ""))
+
+# Create the ggplot
+ggplot(avg_counts_by_variable%>%filter(Sex=="M"), aes(x = Time, y = variable_mean, color = Geno, group = interaction(treatLarvae, treatAdult, Geno))) +
+  geom_errorbar(aes(ymin = pmax(variable_mean - variable_sd, 0), ymax = variable_mean + variable_sd), width = 0.2)+
+  annotate("rect", xmin = "00:00:00", xmax = "09:00:00", ymin = -Inf, ymax = Inf,
+           fill = "gray", alpha = 0.3) +
+  annotate("rect", xmin = "21:00:00", xmax = "23:00:00", ymin = -Inf, ymax = Inf,
+           fill = "gray", alpha = 0.3) +
+    annotate("rect", xmin = "01:00:00", xmax = "03:00:00", ymin = -Inf, ymax = Inf,
+           fill = "lightblue", alpha = 0.7) +
+    annotate("text", x = "02:00:00", y = Inf,
+           label = "Midnight Snack", vjust = 13, color = "black", size = 4)+
+      annotate("rect", xmin = "07:00:00", xmax = "09:00:00", ymin = -Inf, ymax = Inf,
+           fill = "lightpink", alpha = 0.7) +
+    annotate("text", x = "08:00:00", y = Inf,
+           label = "Morning Anxiety", vjust = 3, color = "black", size = 4)+
+        annotate("rect", xmin = "11:00:00", xmax = "13:00:00", ymin = -Inf, ymax = Inf,
+           fill = "lightgreen", alpha = 0.7) +
+    annotate("text", x = "12:00:00", y = Inf,
+           label = "Early Siesta", vjust = 13, color = "black", size = 4)+
+        annotate("rect", xmin = "20:00:00", xmax = "22:00:00", ymin = -Inf, ymax = Inf,
+           fill = "violet", alpha = 0.7) +
+    annotate("text", x = "21:00:00", y = Inf,
+           label = "Evening Peak", vjust = 3, color = "black", size = 4)+
+    geom_point() +
+  geom_line(aes(linetype = interaction(treatLarvae, treatAdult))) +
+  labs(
+    x = "Hour", 
+    y = "Mean Count", 
+    title = paste(experiment_name, "male activity by variable"),
+  ) +
+  theme_classic() +
+  ylim(0, 350) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))  # Rotate x-axis labels by 45 degrees
+
+
+# Save the ggplot as a PNG file with specified dimensions
+ggsave(plot_file, width = 12, height = 6, bg = "white", dpi = 300)
+```
